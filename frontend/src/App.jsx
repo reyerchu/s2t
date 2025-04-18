@@ -100,7 +100,7 @@ function App() {
 
     try {
       addLog('正在上傳文件...');
-      const response = await axios.post('http://localhost:8000/transcribe', formData, {
+      const response = await axios.post('/s2t/api/transcribe', formData, {
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           addLog(`上傳進度: ${percentCompleted}%`);
@@ -109,7 +109,7 @@ function App() {
       
       addLog('文件處理完成');
       setResults(response.data.data);
-      setZipUrl(`http://localhost:8000${response.data.zip_url}`);
+      setZipUrl(`/s2t/api${response.data.zip_url}`);
       addLog('可以下載轉錄結果了');
     } catch (error) {
       console.error('Error:', error);
@@ -122,7 +122,7 @@ function App() {
   // 修改為獲取暫存資料夾大小
   const handleCleanFiles = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/temp-size');
+      const response = await axios.get('/s2t/api/temp-size');
       setTempFolderSize(response.data);
       setShowPasswordDialog(true);
     } catch (error) {
@@ -137,7 +137,7 @@ function App() {
   const handlePasswordSubmit = async () => {
     setCleaningStatus('處理中...');
     try {
-      const response = await axios.post('http://localhost:8000/clean-temp', { password });
+      const response = await axios.post('/s2t/api/clean-temp', { password });
       if (response.data.success) {
         setCleaningStatus('成功清空暫存檔案');
         addLog('已清空所有暫存檔案');

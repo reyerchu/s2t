@@ -24,7 +24,12 @@ logging.basicConfig(
     ]
 )
 
-app = FastAPI()
+app = FastAPI(
+    title="Speech to Text API",
+    description="音頻轉文字 API 服務",
+    docs_url="/s2t/api/docs",
+    openapi_url="/s2t/api/openapi.json",
+)
 
 # 允許跨域請求
 app.add_middleware(
@@ -34,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 設置子路徑前綴
+PREFIX = "/s2t/api"
 
 class TranscriptionRequest:
     def __init__(self, file: UploadFile, output_formats: List[str]):
@@ -211,7 +219,7 @@ class TranscriptionService:
 # 創建轉錄服務實例
 transcription_service = TranscriptionService()
 
-@app.post("/transcribe")
+@app.post(f"{PREFIX}/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
     output_formats: str = Form(None)
@@ -247,14 +255,14 @@ async def transcribe(
             raise e
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/download/{session_id}/{filename}")
+@app.get(f"{PREFIX}/download/{{session_id}}/{{filename}}")
 async def download_file(session_id: str, filename: str):
     file_path = f"temp/{session_id}/{filename}"
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=filename)
 
-@app.post("/clean-temp")
+@app.post(f"{PREFIX}/clean-temp")
 async def clean_temp_files(password_data: PasswordModel):
     logging.info("接收到清理暫存檔案請求")
     try:
@@ -290,7 +298,7 @@ async def clean_temp_files(password_data: PasswordModel):
         traceback.print_exc()
         return JSONResponse({"success": False, "message": f"發生錯誤: {str(e)}"})
 
-@app.get("/temp-size")
+@app.get(f"{PREFIX}/temp-size")
 async def get_temp_size():
     """獲取 temp 目錄的大小信息"""
     logging.info("請求獲取暫存目錄大小")
