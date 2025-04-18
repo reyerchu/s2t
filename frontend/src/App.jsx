@@ -73,14 +73,14 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
+    <div className="min-h-screen bg-white text-gray-800">
       {/* Header */}
-      <header className="bg-gray-900 py-6 shadow-lg">
+      <header className="bg-gradient-to-r from-amber-600 to-yellow-500 py-6 shadow-md">
         <div className="container mx-auto px-4">
-          <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+          <h1 className="text-4xl font-bold text-white">
             影音轉文字服務
           </h1>
-          <p className="text-gray-400 mt-2">
+          <p className="text-amber-100 mt-2">
             將您的影片或音頻檔案轉換為多種格式的文字內容
           </p>
         </div>
@@ -89,8 +89,8 @@ function App() {
       <div className="container mx-auto px-4 py-8">
         {/* Main content */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-gray-800 rounded-xl shadow-xl p-6 border border-gray-700">
-            <h2 className="text-2xl font-bold mb-6 text-blue-400">選擇輸出格式</h2>
+          <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+            <h2 className="text-2xl font-bold mb-6 text-amber-700">選擇輸出格式</h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
               {Object.entries({
                 txt: '.txt (純文字)',
@@ -99,22 +99,22 @@ function App() {
                 tsv: '.tsv (Excel)',
                 json: '.json (完整數據)'
               }).map(([format, label]) => (
-                <label key={format} className="flex items-center space-x-3 p-3 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors cursor-pointer">
+                <label key={format} className="flex items-center space-x-3 p-3 rounded-lg bg-amber-50 hover:bg-amber-100 transition-colors cursor-pointer border border-amber-200">
                   <input
                     type="checkbox"
                     checked={selectedFormats[format]}
                     onChange={() => handleFormatChange(format)}
-                    className="form-checkbox h-5 w-5 text-blue-500 rounded"
+                    className="form-checkbox h-5 w-5 text-amber-600 rounded"
                   />
-                  <span>{label}</span>
+                  <span className="text-gray-700">{label}</span>
                 </label>
               ))}
             </div>
 
             <form onSubmit={handleSubmit}>
-              <h2 className="text-2xl font-bold mb-4 text-blue-400">上傳文件</h2>
+              <h2 className="text-2xl font-bold mb-4 text-amber-700">上傳文件</h2>
               <div className="mb-6">
-                <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
+                <div className="border-2 border-dashed border-amber-300 rounded-lg p-8 text-center hover:border-amber-500 transition-colors bg-amber-50">
                   <input
                     type="file"
                     accept="*/*"
@@ -123,15 +123,15 @@ function App() {
                     id="file-upload"
                   />
                   <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-amber-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    <span className="text-gray-300 text-lg font-medium">選擇文件或拖放至此</span>
+                    <span className="text-gray-700 text-lg font-medium">選擇文件或拖放至此</span>
                     <span className="text-gray-500 text-sm mt-1">支持所有影片和音頻格式</span>
                     {file && (
-                      <div className="mt-4 p-3 bg-blue-900/30 rounded-lg">
-                        <p className="text-blue-300">已選擇: {file.name}</p>
-                        <p className="text-gray-400 text-sm">大小: {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                      <div className="mt-4 p-3 bg-amber-100 rounded-lg">
+                        <p className="text-amber-700">已選擇: {file.name}</p>
+                        <p className="text-gray-600 text-sm">大小: {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
                       </div>
                     )}
                   </label>
@@ -143,8 +143,8 @@ function App() {
                 disabled={!file || loading}
                 className={`w-full py-3 px-4 rounded-lg font-bold text-lg transition-colors ${
                   !file || loading 
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                    : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white'
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                    : 'bg-amber-600 hover:bg-amber-700 text-white'
                 }`}
               >
                 {loading ? (
@@ -162,9 +162,9 @@ function App() {
 
           <div>
             {logs.length > 0 && (
-              <div className="bg-gray-800 rounded-xl shadow-xl p-6 border border-gray-700 mb-8">
-                <h2 className="text-2xl font-bold mb-4 text-blue-400">處理進度</h2>
-                <div className="bg-black text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
+              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200 mb-8">
+                <h2 className="text-2xl font-bold mb-4 text-amber-700">處理進度</h2>
+                <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
                   {logs.map((log, index) => (
                     <div key={index} className="mb-1 leading-relaxed">{log}</div>
                   ))}
@@ -173,12 +173,12 @@ function App() {
             )}
 
             {zipUrl && (
-              <div className="bg-gradient-to-r from-blue-900/50 to-purple-900/50 rounded-xl shadow-xl p-6 border border-blue-700 mb-8">
-                <h2 className="text-2xl font-bold mb-4 text-blue-300">轉換完成</h2>
-                <p className="text-gray-300 mb-4">您的文件已成功轉換為文字，點擊下方按鈕下載所有格式。</p>
+              <div className="bg-amber-50 rounded-xl shadow-md p-6 border border-amber-200 mb-8">
+                <h2 className="text-2xl font-bold mb-4 text-amber-700">轉換完成</h2>
+                <p className="text-gray-700 mb-4">您的文件已成功轉換為文字，點擊下方按鈕下載所有格式。</p>
                 <a 
                   href={zipUrl} 
-                  className="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-bold transition-colors"
+                  className="block w-full text-center bg-amber-600 hover:bg-amber-700 text-white py-3 px-4 rounded-lg font-bold transition-colors"
                   download
                 >
                   下載 ZIP 文件
@@ -189,24 +189,24 @@ function App() {
         </div>
 
         {results && (
-          <div className="mt-8 bg-gray-800 rounded-xl shadow-xl p-6 border border-gray-700">
-            <h2 className="text-2xl font-bold mb-6 text-blue-400">預覽結果</h2>
+          <div className="mt-8 bg-white rounded-xl shadow-md p-6 border border-gray-200">
+            <h2 className="text-2xl font-bold mb-6 text-amber-700">預覽結果</h2>
             <div className="grid grid-cols-1 gap-6">
               {Object.entries(results).map(([format, content]) => (
-                <div key={format} className="border border-gray-700 bg-gray-750 rounded-lg p-4">
+                <div key={format} className="border border-amber-200 bg-amber-50 rounded-lg p-4">
                   <h3 className="font-bold mb-3 text-lg flex items-center">
-                    <span className="inline-block w-8 h-8 rounded-full bg-blue-500 text-white mr-2 flex items-center justify-center">
+                    <span className="inline-block w-8 h-8 rounded-full bg-amber-600 text-white mr-2 flex items-center justify-center">
                       {format.charAt(0).toUpperCase()}
                     </span>
-                    <span className="text-blue-300">{format.toUpperCase()} 格式</span>
+                    <span className="text-amber-700">{format.toUpperCase()} 格式</span>
                   </h3>
-                  <div className="bg-gray-900 p-4 rounded-lg">
+                  <div className="bg-white p-4 rounded-lg border border-gray-200">
                     {format === 'json' ? (
-                      <pre className="whitespace-pre-wrap text-gray-300 text-sm">
+                      <pre className="whitespace-pre-wrap text-gray-700 text-sm">
                         {JSON.stringify(content, null, 2)}
                       </pre>
                     ) : (
-                      <pre className="whitespace-pre-wrap text-gray-300">
+                      <pre className="whitespace-pre-wrap text-gray-700">
                         {content}
                       </pre>
                     )}
