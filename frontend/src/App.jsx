@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 
 function App() {
@@ -6,6 +6,7 @@ function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [selectedFormats, setSelectedFormats] = useState({
     txt: true,
     srt: true,
@@ -14,12 +15,54 @@ function App() {
     json: false
   });
   const [zipUrl, setZipUrl] = useState(null);
+  const fileInputRef = useRef(null);
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-    setLogs([]);
-    setResults(null);
-    setZipUrl(null);
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setLogs([]);
+      setResults(null);
+      setZipUrl(null);
+    }
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles && droppedFiles.length > 0) {
+      setFile(droppedFiles[0]);
+      setLogs([]);
+      setResults(null);
+      setZipUrl(null);
+      
+      // 更新文件輸入框的值（供參考）
+      if (fileInputRef.current) {
+        // 因为安全原因，无法直接设置 input 的 files 属性，但这不影响我们处理拖放的文件
+        // fileInputRef.current.files = droppedFiles;
+      }
+    }
   };
 
   const handleFormatChange = (format) => {
@@ -114,19 +157,32 @@ function App() {
             <form onSubmit={handleSubmit}>
               <h2 className="text-2xl font-bold mb-4 text-amber-700">上傳文件</h2>
               <div className="mb-6">
-                <div className="border-2 border-dashed border-amber-300 rounded-lg p-8 text-center hover:border-amber-500 transition-colors bg-amber-50">
+                <div 
+                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                    isDragging 
+                      ? 'border-amber-600 bg-amber-100' 
+                      : 'border-amber-300 hover:border-amber-500 bg-amber-50'
+                  }`}
+                  onDragEnter={handleDragEnter}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
                   <input
                     type="file"
                     accept="*/*"
                     onChange={handleFileChange}
                     className="hidden"
                     id="file-upload"
+                    ref={fileInputRef}
                   />
                   <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-amber-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    <span className="text-gray-700 text-lg font-medium">選擇文件或拖放至此</span>
+                    <span className="text-gray-700 text-lg font-medium">
+                      {isDragging ? '放開以上傳文件' : '選擇文件或拖放至此'}
+                    </span>
                     <span className="text-gray-500 text-sm mt-1">支持所有影片和音頻格式</span>
                     {file && (
                       <div className="mt-4 p-3 bg-amber-100 rounded-lg">
