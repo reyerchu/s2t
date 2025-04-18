@@ -1,24 +1,32 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, status
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-import whisper
-import ffmpeg
-import os
+from pydantic import BaseModel
 import json
-import zipfile
-import glob
-from typing import List
+import os
+import shutil
 import uuid
+import tempfile
+import subprocess
+from pathlib import Path
 import logging
 import traceback
+import whisper
+import zipfile
+from typing import List, Dict, Any, Optional
 
-# 設置日誌
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# 設定日誌
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 app = FastAPI()
 
-# CORS 設定
+# 允許跨域請求
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,296 +35,297 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class TranscriptionRequest:
+    def __init__(self, file: UploadFile, output_formats: List[str]):
+        self.file = file
+        self.output_formats = output_formats
+
+class PasswordModel(BaseModel):
+    password: str
+
+ROOT_PASSWORD = "admin123"  # 在實際應用中，應該使用更安全的方式存儲和驗證密碼
+
 class TranscriptionService:
     def __init__(self):
-        logger.info("Loading Whisper model...")
-        self.model = whisper.load_model("medium")  # 可選擇不同大小的模型
-        logger.info("Whisper model loaded successfully")
-    
-    async def process_audio(self, file: UploadFile, output_formats: List[str]):
-        # 創建唯一的輸出目錄
-        output_dir = f"temp/{uuid.uuid4()}"
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Created output directory: {output_dir}")
+        self.model = whisper.load_model("tiny")
+        logging.info("Whisper model loaded")
+
+    async def process_audio(self, request: TranscriptionRequest) -> Dict[str, Any]:
+        logging.info(f"處理音頻文件: {request.file.filename}")
         
-        # 保存上傳的音頻文件，使用原始文件名
-        original_filename = file.filename
-        temp_path = f"{output_dir}/{original_filename}"
-        logger.info(f"Saving uploaded file to: {temp_path}")
+        # 建立唯一工作目錄
+        session_id = str(uuid.uuid4())
+        temp_dir = Path("temp") / session_id
+        os.makedirs(temp_dir, exist_ok=True)
+        logging.info(f"建立臨時目錄: {temp_dir}")
         
         try:
-            # 記錄文件信息
-            logger.info(f"File details - Name: {original_filename}, Content-Type: {file.content_type}")
+            # 保存上傳的文件
+            original_filename = request.file.filename
+            file_extension = os.path.splitext(original_filename)[1]
+            input_path = temp_dir / f"input{file_extension}"
             
-            # 讀取文件內容
-            content = await file.read()
-            content_size = len(content)
-            logger.info(f"Read file content, size: {content_size} bytes")
+            with open(input_path, "wb") as f:
+                content = await request.file.read()
+                f.write(content)
             
-            if content_size == 0:
-                logger.error("Uploaded file is empty (0 bytes)")
-                raise HTTPException(status_code=400, detail="Uploaded file is empty (0 bytes)")
+            logging.info(f"原始文件已保存: {input_path}")
             
-            # 保存文件
-            with open(temp_path, "wb") as buffer:
-                buffer.write(content)
+            # 預處理音頻（如果需要）
+            processed_path = temp_dir / "processed.wav"
             
-            # 驗證保存的文件
-            saved_size = os.path.getsize(temp_path)
-            logger.info(f"Saved file size: {saved_size} bytes")
+            # 使用 ffmpeg 轉換為 WAV 格式
+            cmd = [
+                "ffmpeg", "-i", str(input_path), 
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", 
+                str(processed_path)
+            ]
             
-            if saved_size == 0:
-                logger.error("Saved file is empty (0 bytes)")
-                raise HTTPException(status_code=500, detail="Failed to save file: File is empty")
+            logging.info(f"執行 ffmpeg 命令: {' '.join(cmd)}")
             
-            if saved_size != content_size:
-                logger.error(f"File size mismatch: Original={content_size}, Saved={saved_size}")
-                raise HTTPException(status_code=500, detail="File size mismatch during save")
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate()
             
-            # 使用 ffmpeg 進行音頻預處理
-            processed_path = f"{output_dir}/audio.wav"
-            logger.info(f"Processing audio with ffmpeg: {temp_path} -> {processed_path}")
+            if process.returncode != 0:
+                error_message = stderr.decode('utf-8', errors='replace')
+                logging.error(f"ffmpeg 處理失敗: {error_message}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Audio preprocessing failed: {error_message}"
+                )
             
-            try:
-                # 使用更明確的參數，並添加格式檢測
-                stream = ffmpeg.input(temp_path)
-                # 提取音頻並設置參數
-                stream = ffmpeg.output(stream, processed_path, 
-                                    acodec='pcm_s16le',  # 使用 16-bit PCM 編碼
-                                    ac=1,                # 單聲道
-                                    ar='16k',            # 16kHz 採樣率
-                                    loglevel='error',    # 只顯示錯誤信息
-                                    **{'vn': None})      # 忽略視頻流
-                
-                # 添加詳細的錯誤捕獲
-                try:
-                    stdout, stderr = ffmpeg.run(stream, capture_stdout=True, capture_stderr=True)
-                    if stderr:
-                        logger.warning(f"FFmpeg stderr output: {stderr.decode()}")
-                except ffmpeg.Error as e:
-                    error_message = e.stderr.decode() if e.stderr else str(e)
-                    logger.error(f"FFmpeg error: {error_message}")
-                    raise HTTPException(status_code=500, detail=f"Audio processing failed: {error_message}")
-                
-                logger.info("Audio extraction completed successfully")
-                
-                # 檢查處理後的文件是否存在且大小不為0
-                if not os.path.exists(processed_path):
-                    logger.error("Processed file does not exist")
-                    raise HTTPException(status_code=500, detail="Audio processing failed: Output file does not exist")
-                
-                processed_size = os.path.getsize(processed_path)
-                logger.info(f"Processed file size: {processed_size} bytes")
-                
-                if processed_size == 0:
-                    logger.error("Processed file is empty (0 bytes)")
-                    raise HTTPException(status_code=500, detail="Audio processing failed: Output file is empty")
-                
-            except Exception as e:
-                logger.error(f"Error processing audio: {str(e)}")
-                logger.error(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
+            logging.info("音頻預處理完成")
             
             # 使用 Whisper 進行轉錄
-            logger.info("Starting transcription with Whisper")
+            logging.info("開始進行轉錄...")
             try:
-                # 設置 Whisper 參數
-                result = self.model.transcribe(
-                    processed_path,
-                    language="zh",
-                    task="transcribe",
-                    fp16=False,  # 強制使用 FP32
-                    verbose=True  # 顯示詳細信息
-                )
-                logger.info("Transcription completed successfully")
-                logger.info(f"Transcription result: {result['text'][:100]}...")  # 記錄轉錄結果的前100個字符
+                result = self.model.transcribe(str(processed_path))
+                logging.info("轉錄完成")
             except Exception as e:
-                logger.error(f"Transcription error: {str(e)}")
-                logger.error(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+                logging.error(f"轉錄失敗: {str(e)}")
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Transcription failed: {str(e)}"
+                )
             
-            # 生成選擇的格式的輸出
-            logger.info(f"Generating outputs for formats: {output_formats}")
-            outputs = self._generate_outputs(result, output_dir, output_formats)
+            # 處理輸出
+            logging.info(f"生成輸出格式: {request.output_formats}")
+            outputs = {}
+            base_filename = os.path.splitext(original_filename)[0]
+            
+            # 生成各種格式
+            for fmt in request.output_formats:
+                output_path = temp_dir / f"{base_filename}.{fmt}"
+                if fmt == "txt":
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        # 每個段落一行，而不是所有文字連在一起
+                        text_lines = [segment["text"].strip() for segment in result["segments"]]
+                        f.write("\n".join(text_lines))
+                elif fmt == "srt":
+                    self._write_srt(result["segments"], output_path)
+                elif fmt == "vtt":
+                    self._write_vtt(result["segments"], output_path)
+                elif fmt == "tsv":
+                    self._write_tsv(result["segments"], output_path)
+                elif fmt == "json":
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                # 讀取輸出文件內容
+                with open(output_path, "r", encoding="utf-8") as f:
+                    outputs[fmt] = f.read()
+                
+                logging.info(f"已生成 {fmt} 格式: {output_path}")
             
             # 創建 ZIP 文件
-            zip_path = f"{output_dir}/transcripts.zip"
-            logger.info(f"Creating ZIP file: {zip_path}")
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                for format in output_formats:
-                    file_path = f"{output_dir}/transcript.{format}"
-                    if os.path.exists(file_path):
-                        zipf.write(file_path, f"transcript.{format}")
+            zip_path = temp_dir / f"{base_filename}.zip"
+            with zipfile.ZipFile(zip_path, "w") as zip_file:
+                for fmt in request.output_formats:
+                    file_path = temp_dir / f"{base_filename}.{fmt}"
+                    zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
             
-            # 清理臨時文件，但保留 ZIP
-            logger.info("Cleaning up temporary files")
-            for file in glob.glob(f"{output_dir}/*"):
-                if not file.endswith('.zip'):
-                    os.remove(file)
+            logging.info(f"已創建 ZIP 文件: {zip_path}")
             
+            # 返回結果和 ZIP 文件路徑
             return {
-                "zip_path": zip_path,
-                "outputs": outputs
+                "data": outputs,
+                "zip_path": str(zip_path),
+                "session_id": session_id,
+                "filename": base_filename
             }
             
         except Exception as e:
-            logger.error(f"Error in process_audio: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise HTTPException(status_code=500, detail=str(e))
+            logging.error(f"處理過程中發生錯誤: {str(e)}")
+            traceback.print_exc()
+            # 清理臨時目錄
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Error processing audio: {str(e)}"
+            )
     
-    def _generate_outputs(self, result, output_dir, output_formats):
-        outputs = {}
-        
-        # 純文字 (.txt)
-        if "txt" in output_formats:
-            txt_path = f"{output_dir}/transcript.txt"
-            logger.info(f"Generating TXT file: {txt_path}")
-            
-            # 改為每個片段一行
-            text_lines = [segment["text"].strip() for segment in result["segments"]]
-            text = "\n".join(text_lines)
-            
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            outputs["txt"] = text
-        
-        # SRT 格式
-        if "srt" in output_formats:
-            srt_path = f"{output_dir}/transcript.srt"
-            logger.info(f"Generating SRT file: {srt_path}")
-            srt_content = self._generate_srt(result["segments"])
-            with open(srt_path, "w", encoding="utf-8") as f:
-                f.write(srt_content)
-            outputs["srt"] = srt_content
-        
-        # VTT 格式
-        if "vtt" in output_formats:
-            vtt_path = f"{output_dir}/transcript.vtt"
-            logger.info(f"Generating VTT file: {vtt_path}")
-            vtt_content = self._generate_vtt(result["segments"])
-            with open(vtt_path, "w", encoding="utf-8") as f:
-                f.write(vtt_content)
-            outputs["vtt"] = vtt_content
-        
-        # TSV 格式
-        if "tsv" in output_formats:
-            tsv_path = f"{output_dir}/transcript.tsv"
-            logger.info(f"Generating TSV file: {tsv_path}")
-            tsv_content = self._generate_tsv(result["segments"])
-            with open(tsv_path, "w", encoding="utf-8") as f:
-                f.write(tsv_content)
-            outputs["tsv"] = tsv_content
-        
-        # JSON 格式
-        if "json" in output_formats:
-            json_path = f"{output_dir}/transcript.json"
-            logger.info(f"Generating JSON file: {json_path}")
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-            outputs["json"] = result
-        
-        return outputs
-
-    def _generate_srt(self, segments):
-        srt_lines = []
-        for i, segment in enumerate(segments, start=1):
-            start = self._format_timestamp(segment["start"])
-            end = self._format_timestamp(segment["end"])
-            srt_lines.extend([
-                str(i),
-                f"{start} --> {end}",
-                segment["text"].strip(),
-                ""
-            ])
-        return "\n".join(srt_lines)
-
-    def _generate_vtt(self, segments):
-        vtt_lines = ["WEBVTT\n"]
-        for i, segment in enumerate(segments):
-            start = self._format_timestamp(segment["start"])
-            end = self._format_timestamp(segment["end"])
-            vtt_lines.extend([
-                f"{start} --> {end}",
-                segment["text"].strip(),
-                ""
-            ])
-        return "\n".join(vtt_lines)
-
-    def _generate_tsv(self, segments):
-        tsv_lines = ["start\tend\ttext"]
-        for segment in segments:
-            start = self._format_timestamp(segment["start"])
-            end = self._format_timestamp(segment["end"])
-            text = segment["text"].strip().replace("\t", " ")
-            tsv_lines.append(f"{start}\t{end}\t{text}")
-        return "\n".join(tsv_lines)
-
-    def _format_timestamp(self, seconds):
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        seconds = seconds % 60
-        milliseconds = int((seconds % 1) * 1000)
+    def _write_srt(self, segments, output_path):
+        with open(output_path, "w", encoding="utf-8") as f:
+            for i, segment in enumerate(segments, start=1):
+                start_time = self._format_timestamp(segment["start"], format="srt")
+                end_time = self._format_timestamp(segment["end"], format="srt")
+                text = segment["text"].strip()
+                f.write(f"{i}\n{start_time} --> {end_time}\n{text}\n\n")
+    
+    def _write_vtt(self, segments, output_path):
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("WEBVTT\n\n")
+            for i, segment in enumerate(segments):
+                start_time = self._format_timestamp(segment["start"], format="vtt")
+                end_time = self._format_timestamp(segment["end"], format="vtt")
+                text = segment["text"].strip()
+                f.write(f"{i+1}\n{start_time} --> {end_time}\n{text}\n\n")
+    
+    def _write_tsv(self, segments, output_path):
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("start\tend\ttext\n")
+            for segment in segments:
+                start_time = segment["start"]
+                end_time = segment["end"]
+                text = segment["text"].strip()
+                f.write(f"{start_time}\t{end_time}\t{text}\n")
+    
+    def _format_timestamp(self, seconds, format="srt"):
+        hours, seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        milliseconds = int((seconds - int(seconds)) * 1000)
         seconds = int(seconds)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+        
+        if format == "srt":
+            return f"{int(hours):02d}:{int(minutes):02d}:{seconds:02d},{milliseconds:03d}"
+        elif format == "vtt":
+            return f"{int(hours):02d}:{int(minutes):02d}:{seconds:02d}.{milliseconds:03d}"
+        else:
+            return seconds
 
-service = TranscriptionService()
-
-@app.get("/files")
-async def list_files():
-    """列出 temp 目錄中的所有文件"""
-    files = []
-    for file in os.listdir("temp"):
-        if os.path.isfile(os.path.join("temp", file)) and not file.endswith('.zip'):
-            files.append(file)
-    return {"files": files}
+# 創建轉錄服務實例
+transcription_service = TranscriptionService()
 
 @app.post("/transcribe")
-async def transcribe_audio(
+async def transcribe(
     file: UploadFile = File(...),
-    output_formats: str = Form("[]")
+    output_formats: str = Form(None)
 ):
     try:
-        # 解析輸出格式列表
-        formats = json.loads(output_formats)
-        if not formats:
-            formats = ["txt", "srt", "vtt", "tsv", "json"]  # 默認全部輸出
+        # 解析輸出格式
+        formats = ["txt", "srt", "vtt", "tsv", "json"]
+        if output_formats:
+            formats = json.loads(output_formats)
         
-        logger.info(f"Received file: {file.filename}, formats: {formats}")
-        result = await service.process_audio(file, formats)
-        return {
-            "status": "success",
-            "data": result["outputs"],
-            "zip_url": f"/download/{os.path.basename(os.path.dirname(result['zip_path']))}/transcripts.zip"
-        }
+        # 檢查檔案類型
+        if not file.filename:
+            logging.warning("未提供檔案名稱")
+            raise HTTPException(status_code=400, detail="No file name provided")
+        
+        logging.info(f"接收到轉錄請求: {file.filename}, 格式: {formats}")
+        
+        # 處理音頻
+        request = TranscriptionRequest(file=file, output_formats=formats)
+        result = await transcription_service.process_audio(request)
+        
+        # 返回結果
+        zip_url = f"/download/{result['session_id']}/{result['filename']}.zip"
+        return JSONResponse({
+            "data": result["data"],
+            "zip_url": zip_url
+        })
+    
     except Exception as e:
-        logger.error(f"Error in transcribe_audio: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        logging.error(f"處理請求時發生錯誤: {str(e)}")
+        traceback.print_exc()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/download/{dir_id}/transcripts.zip")
-async def download_zip(dir_id: str):
-    """下載 ZIP 文件"""
-    zip_path = f"temp/{dir_id}/transcripts.zip"
-    if os.path.exists(zip_path):
-        return FileResponse(
-            zip_path,
-            media_type="application/zip",
-            filename="transcripts.zip"
-        )
-    return {"status": "error", "message": "File not found"}
-
-@app.get("/files/{filename}")
-async def get_file(filename: str):
-    """獲取指定文件的內容"""
-    file_path = f"temp/{filename}"
+@app.get("/download/{session_id}/{filename}")
+async def download_file(session_id: str, filename: str):
+    file_path = f"temp/{session_id}/{filename}"
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    
-    return FileResponse(
-        file_path,
-        media_type="application/octet-stream",
-        filename=filename
-    ) 
+    return FileResponse(file_path, filename=filename)
+
+@app.post("/clean-temp")
+async def clean_temp_files(password_data: PasswordModel):
+    logging.info("接收到清理暫存檔案請求")
+    try:
+        # 驗證密碼（記錄接收的密碼以便調試）
+        received_password = password_data.password.strip()
+        logging.info(f"接收到的密碼: '{received_password}'")
+        
+        # 更寬鬆的密碼檢查（允許前後空格並不區分大小寫）
+        if received_password.lower() == ROOT_PASSWORD.lower():
+            # 清空 temp 目錄
+            temp_dir = Path("temp")
+            if os.path.exists(temp_dir):
+                # 刪除所有子目錄和文件
+                for item in os.listdir(temp_dir):
+                    item_path = temp_dir / item
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        os.remove(item_path)
+                
+                logging.info("成功清空暫存檔案")
+                return JSONResponse({"success": True, "message": "成功清空暫存檔案"})
+            else:
+                logging.info("暫存目錄不存在，已創建")
+                os.makedirs(temp_dir, exist_ok=True)
+                return JSONResponse({"success": True, "message": "暫存目錄不存在，已創建"})
+        else:
+            logging.warning(f"密碼驗證失敗，預期密碼: '{ROOT_PASSWORD}'")
+            return JSONResponse({"success": False, "message": "密碼不正確 (提示: admin123)"})
+        
+    except Exception as e:
+        logging.error(f"清理暫存檔案時發生錯誤: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse({"success": False, "message": f"發生錯誤: {str(e)}"})
+
+@app.get("/temp-size")
+async def get_temp_size():
+    """獲取 temp 目錄的大小信息"""
+    logging.info("請求獲取暫存目錄大小")
+    try:
+        temp_dir = Path("temp")
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir, exist_ok=True)
+            return JSONResponse({"size_bytes": 0, "size_mb": 0, "file_count": 0})
+        
+        # 計算目錄大小和文件數量
+        total_size = 0
+        file_count = 0
+        
+        for dirpath, dirnames, filenames in os.walk(temp_dir):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if os.path.exists(fp):
+                    total_size += os.path.getsize(fp)
+                    file_count += 1
+        
+        # 轉換為 MB
+        size_mb = round(total_size / (1024 * 1024), 2)
+        
+        logging.info(f"暫存目錄大小: {size_mb} MB, 文件數量: {file_count}")
+        return JSONResponse({
+            "size_bytes": total_size,
+            "size_mb": size_mb,
+            "file_count": file_count
+        })
+        
+    except Exception as e:
+        logging.error(f"獲取暫存目錄大小時發生錯誤: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

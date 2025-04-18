@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 function App() {
@@ -16,6 +16,10 @@ function App() {
   });
   const [zipUrl, setZipUrl] = useState(null);
   const fileInputRef = useRef(null);
+  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [password, setPassword] = useState('');
+  const [cleaningStatus, setCleaningStatus] = useState(null);
+  const [tempFolderSize, setTempFolderSize] = useState(null);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -115,6 +119,50 @@ function App() {
     }
   };
 
+  // 修改為獲取暫存資料夾大小
+  const handleCleanFiles = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/temp-size');
+      setTempFolderSize(response.data);
+      setShowPasswordDialog(true);
+    } catch (error) {
+      console.error('Error fetching temp size:', error);
+      addLog(`獲取暫存資料夾大小失敗: ${error.message}`);
+      // 如果獲取大小失敗，仍然顯示對話框但不顯示大小
+      setTempFolderSize(null);
+      setShowPasswordDialog(true);
+    }
+  };
+
+  const handlePasswordSubmit = async () => {
+    setCleaningStatus('處理中...');
+    try {
+      const response = await axios.post('http://localhost:8000/clean-temp', { password });
+      if (response.data.success) {
+        setCleaningStatus('成功清空暫存檔案');
+        addLog('已清空所有暫存檔案');
+      } else {
+        setCleaningStatus('密碼錯誤或清空失敗');
+        addLog('清空暫存檔案失敗: 密碼錯誤');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      setCleaningStatus('發生錯誤');
+      addLog(`清空暫存檔案錯誤: ${error.message}`);
+    } finally {
+      setTimeout(() => {
+        setCleaningStatus(null);
+        setShowPasswordDialog(false);
+        setPassword('');
+      }, 3000);
+    }
+  };
+
+  const handleCancelPasswordDialog = () => {
+    setShowPasswordDialog(false);
+    setPassword('');
+  };
+
   return (
     <div className="min-h-screen bg-white text-gray-800">
       {/* Header */}
@@ -130,6 +178,17 @@ function App() {
       </header>
 
       <div className="container mx-auto px-4 py-8">
+        {/* Admin Actions */}
+        <div className="mb-8">
+          <button
+            onClick={handleCleanFiles}
+            className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-medium transition-colors float-right"
+          >
+            清空暫存檔案
+          </button>
+          <div className="clear-both"></div>
+        </div>
+
         {/* Main content */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
@@ -278,6 +337,61 @@ function App() {
           <p>© {new Date().getFullYear()} 音頻轉文字服務 - 使用 Whisper 語音辨識模型</p>
         </footer>
       </div>
+
+      {/* Password Dialog */}
+      {showPasswordDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold mb-4 text-amber-700">需要密碼</h3>
+            <p className="text-gray-700 mb-4">
+              請輸入密碼以清空暫存檔案
+              {tempFolderSize && ` (${tempFolderSize.size_mb} MBytes，${tempFolderSize.file_count} 個檔案)`}
+            </p>
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              handlePasswordSubmit();
+            }}>
+              <div className="mb-4">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="請輸入密碼"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  autoFocus
+                />
+              </div>
+
+              {cleaningStatus && (
+                <div className={`mb-4 p-3 rounded-lg ${
+                  cleaningStatus.includes('成功') 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {cleaningStatus}
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={handleCancelPasswordDialog}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors"
+                >
+                  確認
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
