@@ -1,36 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 
 function App() {
   const [file, setFile] = useState(null);
-  const [fileList, setFileList] = useState([]);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState([]);
   const [selectedFormats, setSelectedFormats] = useState({
     txt: true,
     srt: true,
-    vtt: true,
-    tsv: true,
-    json: true
+    vtt: false,
+    tsv: false,
+    json: false
   });
   const [zipUrl, setZipUrl] = useState(null);
 
-  // 獲取文件列表
-  useEffect(() => {
-    const fetchFiles = async () => {
-      try {
-        const response = await axios.get('http://localhost:8000/files');
-        setFileList(response.data.files);
-      } catch (error) {
-        console.error('Error fetching files:', error);
-      }
-    };
-    
-    fetchFiles();
-  }, []);
-
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
+    setLogs([]);
+    setResults(null);
+    setZipUrl(null);
   };
 
   const handleFormatChange = (format) => {
@@ -40,27 +29,44 @@ function App() {
     }));
   };
 
+  const addLog = (message) => {
+    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${message}`]);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!file) return;
 
     setLoading(true);
+    setLogs([]);
+    addLog(`開始處理文件: ${file.name}`);
+    
     const formData = new FormData();
     formData.append('file', file);
     
-    // 將選中的格式轉換為數組
     const formats = Object.entries(selectedFormats)
       .filter(([_, selected]) => selected)
       .map(([format]) => format);
     
     formData.append('output_formats', JSON.stringify(formats));
+    addLog(`選擇的輸出格式: ${formats.join(', ')}`);
 
     try {
-      const response = await axios.post('http://localhost:8000/transcribe', formData);
+      addLog('正在上傳文件...');
+      const response = await axios.post('http://localhost:8000/transcribe', formData, {
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          addLog(`上傳進度: ${percentCompleted}%`);
+        }
+      });
+      
+      addLog('文件處理完成');
       setResults(response.data.data);
       setZipUrl(`http://localhost:8000${response.data.zip_url}`);
+      addLog('可以下載轉錄結果了');
     } catch (error) {
       console.error('Error:', error);
+      addLog(`錯誤: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -123,36 +129,13 @@ function App() {
       
       <form onSubmit={handleSubmit} className="mb-4">
         <div className="mb-4">
-          <h2 className="text-xl font-bold mb-2">上傳新文件</h2>
+          <h2 className="text-xl font-bold mb-2">上傳文件</h2>
           <input
             type="file"
-            accept="audio/*,video/*"
+            accept="*/*"
             onChange={handleFileChange}
             className="mb-2"
           />
-        </div>
-        
-        <div className="mb-4">
-          <h2 className="text-xl font-bold mb-2">或選擇已有文件</h2>
-          <select 
-            className="w-full p-2 border rounded"
-            onChange={(e) => {
-              if (e.target.value) {
-                // 創建一個假的 File 對象
-                const fakeFile = new File([], e.target.value);
-                setFile(fakeFile);
-              } else {
-                setFile(null);
-              }
-            }}
-          >
-            <option value="">-- 選擇文件 --</option>
-            {fileList.map((fileName) => (
-              <option key={fileName} value={fileName}>
-                {fileName}
-              </option>
-            ))}
-          </select>
         </div>
         
         <button
@@ -163,6 +146,17 @@ function App() {
           {loading ? '處理中...' : '開始轉換'}
         </button>
       </form>
+
+      {logs.length > 0 && (
+        <div className="mb-4 p-4 bg-gray-100 rounded">
+          <h2 className="text-xl font-bold mb-2">處理進度</h2>
+          <div className="bg-black text-green-400 p-4 rounded font-mono text-sm h-48 overflow-y-auto">
+            {logs.map((log, index) => (
+              <div key={index}>{log}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {zipUrl && (
         <div className="mb-4 p-4 bg-green-100 rounded">
