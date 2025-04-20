@@ -14,6 +14,7 @@ import traceback
 import whisper
 import zipfile
 from typing import List, Dict, Any, Optional
+import yt_dlp
 
 # 設定日誌
 logging.basicConfig(
@@ -52,6 +53,10 @@ class PasswordModel(BaseModel):
     password: str
 
 ROOT_PASSWORD = "admin123"  # 在實際應用中，應該使用更安全的方式存儲和驗證密碼
+
+class LinkRequest(BaseModel):
+    url: str
+    output_formats: List[str]
 
 class TranscriptionService:
     def __init__(self):
@@ -216,6 +221,212 @@ class TranscriptionService:
         else:
             return seconds
 
+    async def process_link(self, request: LinkRequest) -> Dict[str, Any]:
+        logging.info(f"處理連結: {request.url}")
+        
+        # 建立唯一工作目錄
+        session_id = str(uuid.uuid4())
+        temp_dir = Path("temp") / session_id
+        os.makedirs(temp_dir, exist_ok=True)
+        logging.info(f"建立臨時目錄: {temp_dir}")
+        
+        try:
+            # 判斷連結類型
+            if "youtube.com" in request.url or "youtu.be" in request.url:
+                logging.info("下載 YouTube 視頻")
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'wav',
+                    }],
+                    'outtmpl': str(temp_dir / 'input.%(ext)s'),
+                    'nocheckcertificate': True,
+                    'ignoreerrors': True,
+                    'no_warnings': True,
+                    'quiet': True,
+                    'extract_flat': False,
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-us,en;q=0.5',
+                    }
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    try:
+                        # 先獲取視頻信息
+                        info = ydl.extract_info(request.url, download=False)
+                        video_title = info.get('title', 'transcription')
+                        # 清理文件名中的非法字符
+                        video_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).strip()
+                        # 下載視頻
+                        ydl.download([request.url])
+                    except Exception as e:
+                        logging.error(f"YouTube 下載失敗: {str(e)}")
+                        # 嘗試使用備用方法
+                        try:
+                            logging.info("嘗試使用備用方法下載")
+                            ydl_opts['format'] = 'bestaudio'
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                                ydl2.download([request.url])
+                        except Exception as e2:
+                            logging.error(f"備用下載方法也失敗: {str(e2)}")
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"無法下載 YouTube 視頻: {str(e2)}"
+                            )
+            elif "drive.google.com" in request.url:
+                logging.info("下載 Google Drive 文件")
+                # 使用 yt-dlp 下載 Google Drive 文件
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'wav',
+                    }],
+                    'outtmpl': str(temp_dir / 'input.%(ext)s'),
+                    'nocheckcertificate': True,
+                    'ignoreerrors': True,
+                    'no_warnings': True,
+                    'quiet': True,
+                    'extract_flat': False,
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-us,en;q=0.5',
+                    }
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    try:
+                        # 先獲取文件信息
+                        info = ydl.extract_info(request.url, download=False)
+                        file_name = info.get('title', 'transcription')
+                        # 清理文件名中的非法字符
+                        file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                        # 下載文件
+                        ydl.download([request.url])
+                    except Exception as e:
+                        logging.error(f"Google Drive 下載失敗: {str(e)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"無法下載 Google Drive 文件: {str(e)}"
+                        )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="不支持的連結類型。請提供 YouTube 或 Google Drive 連結。"
+                )
+            
+            # 檢查下載的文件是否存在
+            input_files = list(temp_dir.glob('input.*'))
+            if not input_files:
+                raise HTTPException(
+                    status_code=500,
+                    detail="下載失敗：未找到音頻文件"
+                )
+            
+            # 預處理音頻
+            processed_path = temp_dir / "processed.wav"
+            input_path = input_files[0]  # 使用找到的第一個文件
+            
+            # 使用 ffmpeg 轉換為 WAV 格式
+            cmd = [
+                "ffmpeg", "-i", str(input_path), 
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", 
+                str(processed_path)
+            ]
+            
+            logging.info(f"執行 ffmpeg 命令: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                error_message = stderr.decode('utf-8', errors='replace')
+                logging.error(f"ffmpeg 處理失敗: {error_message}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"音頻預處理失敗: {error_message}"
+                )
+            
+            logging.info("音頻預處理完成")
+            
+            # 使用 Whisper 進行轉錄
+            logging.info("開始進行轉錄...")
+            try:
+                result = self.model.transcribe(str(processed_path))
+                logging.info("轉錄完成")
+            except Exception as e:
+                logging.error(f"轉錄失敗: {str(e)}")
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"轉錄失敗: {str(e)}"
+                )
+            
+            # 處理輸出
+            logging.info(f"生成輸出格式: {request.output_formats}")
+            outputs = {}
+            
+            # 使用視頻標題或文件名作為基礎文件名
+            base_filename = video_title if "youtube.com" in request.url or "youtu.be" in request.url else file_name
+            
+            # 生成各種格式
+            for fmt in request.output_formats:
+                output_path = temp_dir / f"{base_filename}.{fmt}"
+                if fmt == "txt":
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        text_lines = [segment["text"].strip() for segment in result["segments"]]
+                        f.write("\n".join(text_lines))
+                elif fmt == "srt":
+                    self._write_srt(result["segments"], output_path)
+                elif fmt == "vtt":
+                    self._write_vtt(result["segments"], output_path)
+                elif fmt == "tsv":
+                    self._write_tsv(result["segments"], output_path)
+                elif fmt == "json":
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                # 讀取輸出文件內容
+                with open(output_path, "r", encoding="utf-8") as f:
+                    outputs[fmt] = f.read()
+                
+                logging.info(f"已生成 {fmt} 格式: {output_path}")
+            
+            # 創建 ZIP 文件
+            zip_path = temp_dir / f"{base_filename}.zip"
+            with zipfile.ZipFile(zip_path, "w") as zip_file:
+                for fmt in request.output_formats:
+                    file_path = temp_dir / f"{base_filename}.{fmt}"
+                    zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
+            
+            logging.info(f"已創建 ZIP 文件: {zip_path}")
+            
+            # 返回結果和 ZIP 文件路徑
+            return {
+                "data": outputs,
+                "zip_path": str(zip_path),
+                "session_id": session_id,
+                "filename": base_filename
+            }
+            
+        except Exception as e:
+            logging.error(f"處理過程中發生錯誤: {str(e)}")
+            traceback.print_exc()
+            # 清理臨時目錄
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=500, 
+                detail=f"處理連結時發生錯誤: {str(e)}"
+            )
+
 # 創建轉錄服務實例
 transcription_service = TranscriptionService()
 
@@ -359,6 +570,28 @@ async def get_temp_size_root():
 async def clean_temp_files_root(password_data: PasswordModel):
     # Forward the request to the main clean_temp_files endpoint
     return await clean_temp_files(password_data)
+
+@app.post(f"{PREFIX}/transcribe-link")
+async def transcribe_link(request: LinkRequest):
+    try:
+        logging.info(f"接收到轉錄連結請求: {request.url}, 格式: {request.output_formats}")
+        
+        # 處理音頻
+        result = await transcription_service.process_link(request)
+        
+        # 返回結果
+        zip_url = f"{PREFIX}/download/{result['session_id']}/{result['filename']}.zip"
+        return JSONResponse({
+            "data": result["data"],
+            "zip_url": zip_url
+        })
+    except Exception as e:
+        logging.error(f"處理連結時發生錯誤: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 if __name__ == "__main__":
     import uvicorn

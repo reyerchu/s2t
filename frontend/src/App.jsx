@@ -7,6 +7,8 @@ axios.defaults.timeout = 300000; // 5 minutes timeout
 
 function App() {
   const [file, setFile] = useState(null);
+  const [url, setUrl] = useState('');
+  const [inputMode, setInputMode] = useState('file'); // 'file' or 'url'
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -84,36 +86,58 @@ function App() {
     setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${message}`]);
   };
 
+  const handleUrlChange = (e) => {
+    setUrl(e.target.value);
+    setLogs([]);
+    setResults(null);
+    setZipUrl(null);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!file) return;
+    if (inputMode === 'file' && !file) return;
+    if (inputMode === 'url' && !url) return;
 
     setLoading(true);
     setLogs([]);
-    addLog(`開始處理文件: ${file.name}`);
-    
-    const formData = new FormData();
-    formData.append('file', file);
+    setZipUrl(null);  // Clear the zipUrl when starting a new transcription
     
     const formats = Object.entries(selectedFormats)
       .filter(([_, selected]) => selected)
       .map(([format]) => format);
     
-    formData.append('output_formats', JSON.stringify(formats));
     addLog(`選擇的輸出格式: ${formats.join(', ')}`);
 
     try {
-      addLog('正在上傳文件...');
-      const response = await axios.post('transcribe', formData, {
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          addLog(`上傳進度: ${percentCompleted}%`);
-        }
-      });
+      if (inputMode === 'file') {
+        addLog(`開始處理文件: ${file.name}`);
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('output_formats', JSON.stringify(formats));
+        
+        addLog('正在上傳文件...');
+        const response = await axios.post('transcribe', formData, {
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            addLog(`上傳進度: ${percentCompleted}%`);
+          }
+        });
+        
+        addLog('文件處理完成');
+        setResults(response.data.data);
+        setZipUrl(response.data.zip_url);
+      } else {
+        addLog(`開始處理連結: ${url}`);
+        const response = await axios.post('/s2t/api/transcribe-link', {
+          url: url,
+          output_formats: formats
+        });
+        
+        addLog('連結處理完成');
+        setResults(response.data.data);
+        setZipUrl(response.data.zip_url);
+      }
       
-      addLog('文件處理完成');
-      setResults(response.data.data);
-      setZipUrl(response.data.zip_url);
       addLog('可以下載轉錄結果了');
     } catch (error) {
       console.error('Error:', error);
@@ -216,63 +240,115 @@ function App() {
             </div>
 
             <form onSubmit={handleSubmit}>
-              <h2 className="text-2xl font-bold mb-4 text-amber-700">上傳文件</h2>
               <div className="mb-6">
-                <div 
-                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                    isDragging 
-                      ? 'border-amber-600 bg-amber-100' 
-                      : 'border-amber-300 hover:border-amber-500 bg-amber-50'
-                  }`}
-                  onDragEnter={handleDragEnter}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  <input
-                    type="file"
-                    accept="*/*"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="file-upload"
-                    ref={fileInputRef}
-                  />
-                  <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-amber-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span className="text-gray-700 text-lg font-medium">
-                      {isDragging ? '放開以上傳文件' : '選擇文件或拖放至此'}
-                    </span>
-                    <span className="text-gray-500 text-sm mt-1">支持所有影片和音頻格式</span>
-                    {file && (
-                      <div className="mt-4 p-3 bg-amber-100 rounded-lg">
-                        <p className="text-amber-700">已選擇: {file.name}</p>
-                        <p className="text-gray-600 text-sm">大小: {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                      </div>
-                    )}
-                  </label>
+                <div className="flex space-x-4 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setInputMode('file')}
+                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+                      inputMode === 'file'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    }`}
+                  >
+                    上傳檔案
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInputMode('url')}
+                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+                      inputMode === 'url'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    }`}
+                  >
+                    輸入網址
+                  </button>
                 </div>
+
+                {inputMode === 'file' ? (
+                  <div 
+                    className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                      isDragging 
+                        ? 'border-amber-600 bg-amber-100' 
+                        : 'border-amber-300 hover:border-amber-500 bg-amber-50'
+                    }`}
+                    onDragEnter={handleDragEnter}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
+                    <input
+                      type="file"
+                      accept="*/*"
+                      onChange={handleFileChange}
+                      className="hidden"
+                      id="file-upload"
+                      ref={fileInputRef}
+                    />
+                    <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-amber-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      <span className="text-gray-700 text-lg font-medium">
+                        {isDragging ? '放開以上傳文件' : '選擇文件或拖放至此'}
+                      </span>
+                      <span className="text-gray-500 text-sm mt-1">支持所有影片和音頻格式</span>
+                      {file && (
+                        <div className="mt-4 p-3 bg-amber-100 rounded-lg">
+                          <p className="text-amber-700">已選擇: {file.name}</p>
+                        </div>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <div className="border-2 border-dashed rounded-lg p-8 text-center transition-colors border-amber-300 bg-amber-50">
+                    <div className="flex flex-col items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-amber-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      <input
+                        type="text"
+                        value={url}
+                        onChange={handleUrlChange}
+                        placeholder="請輸入 YouTube 或 Google Drive 連結"
+                        className="w-full px-4 py-2 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                      />
+                      <div className="mt-2 text-sm text-gray-500">
+                        支持的連結格式：
+                        <ul className="list-disc list-inside mt-1 text-left">
+                          <li>YouTube 影片連結 (例如: https://www.youtube.com/watch?v=...)</li>
+                          <li>YouTube 短連結 (例如: https://youtu.be/...)</li>
+                          <li>Google Drive 音頻/視頻文件連結</li>
+                        </ul>
+                      </div>
+                      {url && (
+                        <div className="mt-4 p-3 bg-amber-100 rounded-lg">
+                          <p className="text-amber-700">已輸入: {url}</p>
+                          {url.includes('youtube.com') || url.includes('youtu.be') ? (
+                            <p className="text-sm text-amber-600 mt-1">✓ YouTube 連結已識別</p>
+                          ) : url.includes('drive.google.com') ? (
+                            <p className="text-sm text-amber-600 mt-1">✓ Google Drive 連結已識別</p>
+                          ) : (
+                            <p className="text-sm text-red-600 mt-1">⚠ 請輸入有效的 YouTube 或 Google Drive 連結</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <button
                 type="submit"
-                disabled={!file || loading}
-                className={`w-full py-3 px-4 rounded-lg font-bold text-lg transition-colors ${
-                  !file || loading 
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                    : 'bg-amber-600 hover:bg-amber-700 text-white'
+                disabled={loading || (inputMode === 'file' ? !file : !url)}
+                className={`w-full py-3 px-4 rounded-lg font-medium text-white transition-colors ${
+                  loading || (inputMode === 'file' ? !file : !url)
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-amber-600 hover:bg-amber-700'
                 }`}
               >
-                {loading ? (
-                  <span className="flex items-center justify-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    處理中...
-                  </span>
-                ) : '開始轉換'}
+                {loading ? '處理中...' : '開始轉錄'}
               </button>
             </form>
           </div>
