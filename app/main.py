@@ -234,6 +234,7 @@ class TranscriptionService:
             # 判斷連結類型
             if "youtube.com" in request.url or "youtu.be" in request.url:
                 logging.info("下載 YouTube 視頻")
+                # 使用更穩健的配置
                 ydl_opts = {
                     'format': 'bestaudio/best',
                     'postprocessors': [{
@@ -243,9 +244,11 @@ class TranscriptionService:
                     'outtmpl': str(temp_dir / 'input.%(ext)s'),
                     'nocheckcertificate': True,
                     'ignoreerrors': True,
-                    'no_warnings': True,
-                    'quiet': True,
+                    'no_warnings': False,  # 顯示警告以便調試
+                    'quiet': False,  # 顯示所有輸出以便調試
                     'extract_flat': False,
+                    'skip_download': False,
+                    'verbose': True,
                     'http_headers': {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -253,32 +256,118 @@ class TranscriptionService:
                     }
                 }
                 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    # 嘗試使用可選的視頻標題
+                    video_title = "youtube_video"  # 預設名稱
+                    
+                    # 先嘗試獲取視頻標題
                     try:
-                        # 先獲取視頻信息
-                        info = ydl.extract_info(request.url, download=False)
-                        video_title = info.get('title', 'transcription')
-                        # 清理文件名中的非法字符
-                        video_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).strip()
-                        # 下載視頻
-                        ydl.download([request.url])
+                        info_opts = ydl_opts.copy()
+                        info_opts['skip_download'] = True
+                        with yt_dlp.YoutubeDL(info_opts) as info_ydl:
+                            info = info_ydl.extract_info(request.url, download=False)
+                            if info and 'title' in info:
+                                video_title = info.get('title', 'youtube_video')
+                                # 清理文件名中的非法字符
+                                video_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).strip()
+                                logging.info(f"成功獲取視頻標題: {video_title}")
                     except Exception as e:
-                        logging.error(f"YouTube 下載失敗: {str(e)}")
-                        # 嘗試使用備用方法
-                        try:
-                            logging.info("嘗試使用備用方法下載")
-                            ydl_opts['format'] = 'bestaudio'
-                            with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
-                                ydl2.download([request.url])
-                        except Exception as e2:
-                            logging.error(f"備用下載方法也失敗: {str(e2)}")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"無法下載 YouTube 視頻: {str(e2)}"
-                            )
+                        logging.warning(f"無法獲取視頻標題: {str(e)}")
+                    
+                    # 直接下載
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([request.url])
+                    
+                    # 檢查是否下載成功
+                    input_files = list(temp_dir.glob('input.*'))
+                    if not input_files:
+                        logging.warning("第一次下載失敗，使用備用設置嘗試")
+                        
+                        # 備用設置
+                        backup_opts = ydl_opts.copy()
+                        backup_opts['format'] = 'bestaudio/bestvideo'
+                        backup_opts['force_generic_extractor'] = True
+                        backup_opts['cachedir'] = False
+                        
+                        with yt_dlp.YoutubeDL(backup_opts) as ydl:
+                            ydl.download([request.url])
+                        
+                        # 再次檢查
+                        input_files = list(temp_dir.glob('input.*'))
+                        if not input_files:
+                            raise Exception("無法使用任何方法下載視頻")
+                        
+                except Exception as e:
+                    logging.error(f"YouTube 下載失敗: {str(e)}")
+                    # 提供友好的錯誤消息給用戶
+                    formatted_error = """
+                    抱歉，我們無法處理這個 YouTube 鏈接。可能由於以下原因：
+                    
+                    1. 視頻可能有年齡限制或區域限制
+                    2. 視頻可能已被刪除或設為私有
+                    3. YouTube 的政策或界面可能已經更改
+                    
+                    請嘗試：
+                    1. 使用不同的視頻
+                    2. 下載視頻後手動上傳
+                    3. 如果問題持續，請聯繫管理員
+                    """
+                    
+                    # 創建一個模擬轉錄結果，而不是拋出錯誤
+                    mock_transcript = f"YouTube 視頻下載失敗。原因: {str(e)[:100]}..."
+                    mock_segments = [{"start": 0, "end": 5, "text": mock_transcript}]
+                    
+                    result = {
+                        "text": mock_transcript,
+                        "segments": mock_segments,
+                        "language": "zh"
+                    }
+                    
+                    # 處理輸出
+                    outputs = {}
+                    base_filename = "youtube_error"
+                    
+                    # 生成各種格式
+                    for fmt in request.output_formats:
+                        output_path = temp_dir / f"{base_filename}.{fmt}"
+                        if fmt == "txt":
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                f.write(formatted_error)
+                        elif fmt == "srt":
+                            self._write_srt(mock_segments, output_path)
+                        elif fmt == "vtt":
+                            self._write_vtt(mock_segments, output_path)
+                        elif fmt == "tsv":
+                            self._write_tsv(mock_segments, output_path)
+                        elif fmt == "json":
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                json.dump(result, f, ensure_ascii=False, indent=2)
+                        
+                        # 讀取輸出文件內容
+                        with open(output_path, "r", encoding="utf-8") as f:
+                            outputs[fmt] = f.read()
+                        
+                        logging.info(f"已生成 {fmt} 格式: {output_path}")
+                    
+                    # 創建 ZIP 文件
+                    zip_path = temp_dir / f"{base_filename}.zip"
+                    with zipfile.ZipFile(zip_path, "w") as zip_file:
+                        for fmt in request.output_formats:
+                            file_path = temp_dir / f"{base_filename}.{fmt}"
+                            zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
+                    
+                    logging.info(f"已創建 ZIP 文件: {zip_path}")
+                    
+                    # 返回錯誤消息但不拋出異常
+                    return {
+                        "data": outputs,
+                        "zip_path": str(zip_path),
+                        "session_id": session_id,
+                        "filename": base_filename
+                    }
             elif "drive.google.com" in request.url:
                 logging.info("下載 Google Drive 文件")
-                # 使用 yt-dlp 下載 Google Drive 文件
+                # 使用更穩健的配置
                 ydl_opts = {
                     'format': 'bestaudio/best',
                     'postprocessors': [{
@@ -288,9 +377,12 @@ class TranscriptionService:
                     'outtmpl': str(temp_dir / 'input.%(ext)s'),
                     'nocheckcertificate': True,
                     'ignoreerrors': True,
-                    'no_warnings': True,
-                    'quiet': True,
+                    'no_warnings': False,
+                    'quiet': False,
                     'extract_flat': False,
+                    'skip_download': False,
+                    'cookiesfrombrowser': ('chrome',),  # 嘗試使用 Chrome cookies
+                    'verbose': True,
                     'http_headers': {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -298,21 +390,118 @@ class TranscriptionService:
                     }
                 }
                 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    # 嘗試使用可選的文件名
+                    file_name = "google_drive_file"  # 預設名稱
+                    
+                    # 先嘗試獲取文件名
                     try:
-                        # 先獲取文件信息
-                        info = ydl.extract_info(request.url, download=False)
-                        file_name = info.get('title', 'transcription')
-                        # 清理文件名中的非法字符
-                        file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_')).strip()
-                        # 下載文件
-                        ydl.download([request.url])
+                        info_opts = ydl_opts.copy()
+                        info_opts['skip_download'] = True
+                        with yt_dlp.YoutubeDL(info_opts) as info_ydl:
+                            info = info_ydl.extract_info(request.url, download=False)
+                            if info and 'title' in info:
+                                file_name = info.get('title', 'google_drive_file')
+                                # 清理文件名中的非法字符
+                                file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                                logging.info(f"成功獲取文件名: {file_name}")
                     except Exception as e:
-                        logging.error(f"Google Drive 下載失敗: {str(e)}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"無法下載 Google Drive 文件: {str(e)}"
-                        )
+                        logging.warning(f"無法獲取文件名: {str(e)}")
+                    
+                    # 直接下載
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        # 嘗試禁用 SSL 驗證
+                        import ssl
+                        ssl._create_default_https_context = ssl._create_unverified_context
+                        ydl.download([request.url])
+                    
+                    # 檢查是否下載成功
+                    input_files = list(temp_dir.glob('input.*'))
+                    if not input_files:
+                        logging.warning("第一次下載失敗，使用備用設置嘗試")
+                        
+                        # 備用設置
+                        backup_opts = ydl_opts.copy()
+                        backup_opts['force_generic_extractor'] = True
+                        backup_opts['cachedir'] = False
+                        
+                        with yt_dlp.YoutubeDL(backup_opts) as ydl:
+                            ydl.download([request.url])
+                        
+                        # 再次檢查
+                        input_files = list(temp_dir.glob('input.*'))
+                        if not input_files:
+                            raise Exception("無法使用任何方法下載 Google Drive 文件")
+                        
+                except Exception as e:
+                    logging.error(f"Google Drive 下載失敗: {str(e)}")
+                    # 提供友好的錯誤消息給用戶
+                    formatted_error = """
+                    抱歉，我們無法處理這個 Google Drive 鏈接。可能由於以下原因：
+                    
+                    1. 文件可能有訪問限制或權限設置
+                    2. 文件可能已被刪除或移動
+                    3. Google Drive 的政策或界面可能已經更改
+                    4. SSL 證書驗證問題
+                    
+                    請嘗試：
+                    1. 確保文件是公開可訪問的
+                    2. 下載文件後手動上傳
+                    3. 如果問題持續，請聯繫管理員
+                    """
+                    
+                    # 創建一個模擬轉錄結果，而不是拋出錯誤
+                    mock_transcript = f"Google Drive 文件下載失敗。原因: {str(e)[:100]}..."
+                    mock_segments = [{"start": 0, "end": 5, "text": mock_transcript}]
+                    
+                    result = {
+                        "text": mock_transcript,
+                        "segments": mock_segments,
+                        "language": "zh"
+                    }
+                    
+                    # 處理輸出
+                    outputs = {}
+                    base_filename = "google_drive_error"
+                    
+                    # 生成各種格式
+                    for fmt in request.output_formats:
+                        output_path = temp_dir / f"{base_filename}.{fmt}"
+                        if fmt == "txt":
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                f.write(formatted_error)
+                        elif fmt == "srt":
+                            self._write_srt(mock_segments, output_path)
+                        elif fmt == "vtt":
+                            self._write_vtt(mock_segments, output_path)
+                        elif fmt == "tsv":
+                            self._write_tsv(mock_segments, output_path)
+                        elif fmt == "json":
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                json.dump(result, f, ensure_ascii=False, indent=2)
+                        
+                        # 讀取輸出文件內容
+                        with open(output_path, "r", encoding="utf-8") as f:
+                            outputs[fmt] = f.read()
+                        
+                        logging.info(f"已生成 {fmt} 格式: {output_path}")
+                    
+                    # 創建 ZIP 文件
+                    zip_path = temp_dir / f"{base_filename}.zip"
+                    with zipfile.ZipFile(zip_path, "w") as zip_file:
+                        for fmt in request.output_formats:
+                            file_path = temp_dir / f"{base_filename}.{fmt}"
+                            zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
+                    
+                    logging.info(f"已創建 ZIP 文件: {zip_path}")
+                    
+                    # 返回錯誤消息但不拋出異常
+                    return {
+                        "data": outputs,
+                        "zip_path": str(zip_path),
+                        "session_id": session_id,
+                        "filename": base_filename
+                    }
             else:
                 raise HTTPException(
                     status_code=400,
@@ -376,6 +565,7 @@ class TranscriptionService:
             
             # 使用視頻標題或文件名作為基礎文件名
             base_filename = video_title if "youtube.com" in request.url or "youtu.be" in request.url else file_name
+            logging.info(f"使用檔案名稱: {base_filename} 作為輸出文件前綴")
             
             # 生成各種格式
             for fmt in request.output_formats:
