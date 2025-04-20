@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 
 // Configure axios base URL and timeout
@@ -151,6 +151,7 @@ function App() {
     try {
       const response = await axios.get('temp-size');
       setTempFolderSize(response.data);
+      setPassword(''); // Reset password when opening dialog
       setShowPasswordDialog(true);
     } catch (error) {
       console.error('Error fetching temp size:', error);
@@ -161,32 +162,43 @@ function App() {
   };
 
   const handlePasswordSubmit = async () => {
-    setCleaningStatus('處理中...');
-    try {
-      const response = await axios.post('clean-temp', { password });
-      if (response.data.success) {
-        setCleaningStatus('成功清空暫存檔案');
-        addLog('已清空所有暫存檔案');
-      } else {
-        setCleaningStatus('密碼錯誤或清空失敗');
-        addLog('清空暫存檔案失敗: 密碼錯誤');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      setCleaningStatus('發生錯誤');
-      addLog(`清空暫存檔案錯誤: ${error.message}`);
-    } finally {
-      setTimeout(() => {
-        setCleaningStatus(null);
-        setShowPasswordDialog(false);
-        setPassword('');
-      }, 3000);
+    // If password is empty, treat as cancel
+    if (!password.trim()) {
+      setShowPasswordDialog(false);
+      setPassword('');
+      return;
     }
-  };
 
-  const handleCancelPasswordDialog = () => {
+    // Process the password attempt
+    if (password === 'admin123') {
+      try {
+        setCleaningStatus('cleaning');
+        addLog('正在清空暫存檔案...');
+        await axios.post('/clean-temp', { password });
+        setCleaningStatus('success');
+        setZipUrl(null);  // Clear the zipUrl when cleaning temporary files
+        addLog('暫存檔案已清空');
+      } catch (error) {
+        setCleaningStatus('error');
+        addLog(`清空暫存檔案失敗: ${error.message}`);
+      }
+    } else {
+      setCleaningStatus('error');
+      addLog('密碼錯誤');
+    }
+    
+    // Always close the dialog and reset password after attempt
     setShowPasswordDialog(false);
     setPassword('');
+  };
+
+  const handlePasswordKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handlePasswordSubmit();
+    } else if (e.key === 'Escape') {
+      setShowPasswordDialog(false);
+      setPassword('');
+    }
   };
 
   return (
@@ -419,54 +431,56 @@ function App() {
       {/* Password Dialog */}
       {showPasswordDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full mx-4">
+          <div className="bg-white rounded-lg p-6 w-96">
             <h3 className="text-xl font-bold mb-4 text-amber-700">需要密碼</h3>
-            <p className="text-gray-700 mb-4">
-              請輸入密碼以清空暫存檔案
+            <p className="text-gray-600 mb-4">
+              請輸入管理員密碼以清空暫存檔案
               {tempFolderSize && ` (${tempFolderSize.size_mb} MBytes，${tempFolderSize.file_count} 個檔案)`}
             </p>
-            
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              handlePasswordSubmit();
-            }}>
-              <div className="mb-4">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="請輸入密碼"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  autoFocus
-                />
-              </div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={handlePasswordKeyDown}
+              className="w-full p-2 border border-gray-300 rounded mb-4"
+              placeholder="請輸入密碼"
+              autoFocus
+            />
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setShowPasswordDialog(false);
+                  setPassword('');
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                取消
+              </button>
+              <button
+                onClick={handlePasswordSubmit}
+                className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700"
+              >
+                確認
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-              {cleaningStatus && (
-                <div className={`mb-4 p-3 rounded-lg ${
-                  cleaningStatus.includes('成功') 
-                    ? 'bg-green-100 text-green-700' 
-                    : 'bg-red-100 text-red-700'
-                }`}>
-                  {cleaningStatus}
-                </div>
-              )}
-
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={handleCancelPasswordDialog}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors"
-                >
-                  確認
-                </button>
-              </div>
-            </form>
+      {/* Processing Status */}
+      {cleaningStatus && (
+        <div className="mb-8">
+          <h3 className="text-lg font-semibold mb-2 text-amber-700">處理進度</h3>
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <div className="flex items-center mb-2">
+              <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mr-2"></div>
+              <span className="text-gray-700">處理中...</span>
+            </div>
+            <div className="text-sm text-gray-600">
+              {cleaningStatus === 'cleaning' && '正在清空暫存檔案...'}
+              {cleaningStatus === 'success' && '暫存檔案已清空'}
+              {cleaningStatus === 'error' && '清空暫存檔案失敗'}
+            </div>
           </div>
         </div>
       )}

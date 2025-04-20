@@ -27,7 +27,7 @@ logging.basicConfig(
 
 app = FastAPI(
     title="Speech to Text API",
-    description="音頻轉文字 API 服務",
+    description="音頻轉文字 API 服務 (Port 8002)",
     docs_url="/s2t/api/docs",
     openapi_url="/s2t/api/openapi.json",
 )
@@ -595,4 +595,4 @@ async def transcribe_link(request: LinkRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True) 
