@@ -242,7 +242,7 @@ async def transcribe(
         result = await transcription_service.process_audio(request)
         
         # 返回結果
-        zip_url = f"/download/{result['session_id']}/{result['filename']}.zip"
+        zip_url = f"{PREFIX}/download/{result['session_id']}/{result['filename']}.zip"
         return JSONResponse({
             "data": result["data"],
             "zip_url": zip_url
@@ -255,12 +255,27 @@ async def transcribe(
             raise e
         raise HTTPException(status_code=500, detail=str(e))
 
+# Add a new endpoint that matches the frontend's request path
+@app.post("/transcribe")
+async def transcribe_root(
+    file: UploadFile = File(...),
+    output_formats: str = Form(None)
+):
+    # Forward the request to the main transcribe endpoint
+    return await transcribe(file, output_formats)
+
 @app.get(f"{PREFIX}/download/{{session_id}}/{{filename}}")
 async def download_file(session_id: str, filename: str):
     file_path = f"temp/{session_id}/{filename}"
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=filename)
+
+# Add a new endpoint that matches the frontend's download request path
+@app.get("/download/{session_id}/{filename}")
+async def download_file_root(session_id: str, filename: str):
+    # Forward the request to the main download_file endpoint
+    return await download_file(session_id, filename)
 
 @app.post(f"{PREFIX}/clean-temp")
 async def clean_temp_files(password_data: PasswordModel):
@@ -333,6 +348,17 @@ async def get_temp_size():
         logging.error(f"獲取暫存目錄大小時發生錯誤: {str(e)}")
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# Add new endpoints that match the frontend's request paths
+@app.get("/temp-size")
+async def get_temp_size_root():
+    # Forward the request to the main get_temp_size endpoint
+    return await get_temp_size()
+
+@app.post("/clean-temp")
+async def clean_temp_files_root(password_data: PasswordModel):
+    # Forward the request to the main clean_temp_files endpoint
+    return await clean_temp_files(password_data)
 
 if __name__ == "__main__":
     import uvicorn
