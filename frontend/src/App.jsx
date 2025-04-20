@@ -381,13 +381,15 @@ function App() {
               <div className="bg-amber-50 rounded-xl shadow-md p-6 border border-amber-200 mb-8">
                 <h2 className="text-2xl font-bold mb-4 text-amber-700">轉換完成</h2>
                 <p className="text-gray-700 mb-4">您的文件已成功轉換為文字，點擊下方按鈕下載所有格式。</p>
-                <a 
-                  href={zipUrl} 
-                  className="block w-full text-center bg-amber-600 hover:bg-amber-700 text-white py-3 px-4 rounded-lg font-bold transition-colors"
-                  download
-                >
-                  下載 ZIP 文件
-                </a>
+                <div className="mt-4">
+                  <a
+                    href={zipUrl}
+                    download
+                    className="block w-full text-center bg-amber-600 hover:bg-amber-700 text-white py-3 px-4 rounded-lg font-bold transition-colors"
+                  >
+                    下載 ZIP 文件：{zipUrl.split('/').pop()}
+                  </a>
+                </div>
               </div>
             )}
           </div>
