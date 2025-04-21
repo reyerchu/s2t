@@ -26,12 +26,6 @@ sudo mkdir -p ${DEPLOY_DIR}/frontend
 sudo cp -r frontend/* ${DEPLOY_DIR}/frontend/
 sudo chown -R www-data:www-data ${DEPLOY_DIR}/frontend
 
-# Install frontend dependencies
-echo "Installing frontend dependencies..."
-cd ${DEPLOY_DIR}/frontend
-sudo -u www-data npm install
-cd ../..
-
 # Copy backend files to deployment directory
 echo "Copying backend files to deployment directory..."
 sudo cp -r app ${DEPLOY_DIR}/
@@ -89,6 +83,7 @@ EOF
 # Copy service file to systemd directory
 echo "Installing systemd service..."
 sudo cp ${SERVICE_NAME}.service /etc/systemd/system/
+
 
 # Reload systemd
 echo "Reloading systemd..."

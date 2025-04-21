@@ -8,8 +8,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/var/www/defintek.io/public_html/s2t
 ExecStart=/var/www/defintek.io/public_html/s2t/start-s2t.sh
-Restart=on-failure
-RestartSec=10
+Restart=always
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target
