@@ -128,7 +128,7 @@ function App() {
         setZipUrl(response.data.zip_url);
       } else {
         addLog(`開始處理連結: ${url}`);
-        const response = await axios.post('/s2t/api/transcribe-link', {
+        const response = await axios.post('transcribe-link', {
           url: url,
           output_formats: formats
         });

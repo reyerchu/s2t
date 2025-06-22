@@ -250,9 +250,18 @@ class TranscriptionService:
                     'skip_download': False,
                     'verbose': True,
                     'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'en-us,en;q=0.5',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                    },
+                    'extractor_args': {
+                        'youtube': {
+                            'skip': ['dash', 'live'],
+                        }
                     }
                 }
                 
@@ -288,6 +297,17 @@ class TranscriptionService:
                         backup_opts['format'] = 'bestaudio/bestvideo'
                         backup_opts['force_generic_extractor'] = True
                         backup_opts['cachedir'] = False
+                        backup_opts['extract_flat'] = False
+                        backup_opts['skip_download'] = False
+                        backup_opts['http_headers'] = {
+                            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'DNT': '1',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                        }
                         
                         with yt_dlp.YoutubeDL(backup_opts) as ydl:
                             ydl.download([request.url])
@@ -299,6 +319,7 @@ class TranscriptionService:
                         
                 except Exception as e:
                     logging.error(f"YouTube 下載失敗: {str(e)}")
+                    logging.error(f"詳細錯誤信息: {traceback.format_exc()}")
                     # 提供友好的錯誤消息給用戶
                     formatted_error = """
                     抱歉，我們無法處理這個 YouTube 鏈接。可能由於以下原因：
