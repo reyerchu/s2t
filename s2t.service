@@ -1,0 +1,17 @@
+[Unit]
+Description=Speech to Text Service (S2T)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/reyerchu/s2t/s2t/start-s2t.sh
+RemainAfterExit=yes
+User=reyerchu
+Group=reyerchu
+Environment=PATH=/usr/bin:/usr/local/bin:/usr/local/nodejs/bin
+WorkingDirectory=/home/reyerchu/s2t/s2t
+StandardOutput=append:/var/log/s2t.log
+StandardError=append:/var/log/s2t.error.log
+
+[Install]
+WantedBy=multi-user.target
