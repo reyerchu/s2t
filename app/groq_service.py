@@ -265,7 +265,7 @@ class GroqService:
             logging.info("使用 LLM 生成摘要...")
             
             # 如果文字太長，截取前面部分
-            max_input = 15000
+            max_input = 6000  # 約 2000 tokens，避免超過 LLM 限制
             input_text = text[:max_input] if len(text) > max_input else text
             
             response = self.client.chat.completions.create(
