@@ -402,7 +402,24 @@ function App() {
           <div className="mt-8 bg-white rounded-xl shadow-md p-6 border border-gray-200">
             <h2 className="text-2xl font-bold mb-6 text-amber-700">預覽結果</h2>
             <div className="grid grid-cols-1 gap-6">
-              {Object.entries(results).map(([format, content]) => (
+              {/* 摘要優先顯示 */}
+              {results.summary && (
+                <div className="border-2 border-green-300 bg-green-50 rounded-lg p-4">
+                  <h3 className="font-bold mb-3 text-lg flex items-center">
+                    <span className="inline-block w-8 h-8 rounded-full bg-green-600 text-white mr-2 flex items-center justify-center">
+                      📝
+                    </span>
+                    <span className="text-green-700">AI 內容摘要</span>
+                  </h3>
+                  <div className="bg-white p-4 rounded-lg border border-gray-200 prose prose-sm max-w-none">
+                    <pre className="whitespace-pre-wrap text-gray-700">
+                      {results.summary}
+                    </pre>
+                  </div>
+                </div>
+              )}
+              {/* 其他格式 */}
+              {Object.entries(results).filter(([format]) => format !== 'summary').map(([format, content]) => (
                 <div key={format} className="border border-amber-200 bg-amber-50 rounded-lg p-4">
                   <h3 className="font-bold mb-3 text-lg flex items-center">
                     <span className="inline-block w-8 h-8 rounded-full bg-amber-600 text-white mr-2 flex items-center justify-center">
