@@ -167,8 +167,8 @@ function App() {
       </header>
 
       <div className="container mx-auto px-4 py-6">
-        {/* Row 1: 上傳檔案/輸入網址 | 處理進度 | 清空暫存 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        {/* Row 1: 上傳檔案/輸入網址 | 處理進度(含清空按鈕) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* 左: 上傳檔案/輸入網址 */}
           <div className="bg-white rounded-lg shadow p-4 border">
             <div className="flex space-x-2 mb-3">
@@ -196,27 +196,25 @@ function App() {
             )}
           </div>
 
-          {/* 中: 處理進度 */}
+          {/* 右: 處理進度 (含清空暫存按鈕在右上角) */}
           <div className="bg-white rounded-lg shadow p-4 border">
-            <h3 className="font-bold text-amber-700 mb-2 text-sm">處理進度</h3>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-amber-700 text-sm">處理進度</h3>
+              <button onClick={handleCleanFiles}
+                className="bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded text-xs font-medium">
+                清空暫存檔案
+              </button>
+            </div>
             <div className="bg-gray-900 text-green-400 p-2 rounded font-mono text-xs h-24 overflow-y-auto">
               {logs.length > 0 ? logs.map((log, i) => <div key={i}>{log}</div>) : <span className="text-gray-500">等待開始...</span>}
             </div>
           </div>
-
-          {/* 右: 清空暫存 */}
-          <div className="bg-white rounded-lg shadow p-4 border flex flex-col justify-center">
-            <button onClick={handleCleanFiles}
-              className="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded text-sm font-medium">
-              清空暫存檔案
-            </button>
-          </div>
         </div>
 
-        {/* Row 2: 選擇輸出格式 | 轉換完成 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        {/* Row 2: 選擇輸出格式 | 轉換完成/下載 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* 左: 選擇輸出格式 */}
-          <div className="lg:col-span-2 bg-white rounded-lg shadow p-4 border">
+          <div className="bg-white rounded-lg shadow p-4 border">
             <h3 className="font-bold text-amber-700 mb-2 text-sm">選擇輸出格式</h3>
             <div className="flex flex-wrap gap-2">
               {Object.entries({ txt: 'TXT', srt: 'SRT', vtt: 'VTT', tsv: 'TSV', json: 'JSON' }).map(([fmt, label]) => (
@@ -229,13 +227,13 @@ function App() {
           </div>
 
           {/* 右: 轉換完成/下載 */}
-          <div className="bg-white rounded-lg shadow p-4 border">
+          <div className="bg-white rounded-lg shadow p-4 border flex items-center justify-center">
             {zipUrl ? (
               <a href={zipUrl} download className="block w-full text-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded text-sm font-bold">
                 📥 下載 ZIP
               </a>
             ) : (
-              <div className="text-gray-400 text-sm text-center py-2">轉換完成後可下載</div>
+              <div className="text-gray-400 text-sm text-center">轉換完成後可下載</div>
             )}
           </div>
         </div>
@@ -250,40 +248,49 @@ function App() {
         </div>
 
         {/* 預覽結果 */}
-        {results && (
+                {results && (
           <div className="bg-white rounded-lg shadow p-4 border">
             <h2 className="text-xl font-bold text-amber-700 mb-4">預覽結果</h2>
+            
+            {/* AI 內容摘要 - 獨立一行 */}
+            {results.summary && (
+              <div className="border-2 border-green-300 bg-green-50 rounded-lg p-4 mb-4">
+                <h3 className="font-bold text-green-700 mb-2 flex items-center">📝 AI 內容摘要</h3>
+                <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">{results.summary}</pre>
+              </div>
+            )}
+            
+            {/* TXT 和 SRT 並排 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* 摘要 */}
-              {results.summary && (
-                <div className="border-2 border-green-300 bg-green-50 rounded-lg p-4">
-                  <h3 className="font-bold text-green-700 mb-2 flex items-center">📝 AI 內容摘要</h3>
-                  <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">{results.summary}</pre>
-                </div>
-              )}
-              {/* TXT */}
               {results.txt && (
                 <div className="border border-amber-200 bg-amber-50 rounded-lg p-4">
                   <h3 className="font-bold text-amber-700 mb-2">📄 TXT 格式</h3>
                   <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">{results.txt}</pre>
                 </div>
               )}
-            </div>
-            {/* SRT 和其他格式 */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-              {Object.entries(results).filter(([fmt]) => !['summary', 'txt'].includes(fmt)).map(([fmt, content]) => (
-                <div key={fmt} className="border border-amber-200 bg-amber-50 rounded-lg p-4">
-                  <h3 className="font-bold text-amber-700 mb-2">{fmt.toUpperCase()} 格式</h3>
-                  <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">
-                    {fmt === 'json' ? JSON.stringify(content, null, 2) : content}
-                  </pre>
+              {results.srt && (
+                <div className="border border-amber-200 bg-amber-50 rounded-lg p-4">
+                  <h3 className="font-bold text-amber-700 mb-2">📄 SRT 格式</h3>
+                  <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">{results.srt}</pre>
                 </div>
-              ))}
+              )}
             </div>
+            
+            {/* 其他格式 */}
+            {Object.entries(results).filter(([fmt]) => !["summary", "txt", "srt"].includes(fmt)).length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                {Object.entries(results).filter(([fmt]) => !["summary", "txt", "srt"].includes(fmt)).map(([fmt, content]) => (
+                  <div key={fmt} className="border border-amber-200 bg-amber-50 rounded-lg p-4">
+                    <h3 className="font-bold text-amber-700 mb-2">{fmt.toUpperCase()} 格式</h3>
+                    <pre className="whitespace-pre-wrap text-gray-700 text-sm bg-white p-3 rounded border max-h-64 overflow-y-auto">
+                      {fmt === "json" ? JSON.stringify(content, null, 2) : content}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-
-        <footer className="mt-8 text-center text-gray-400 text-xs">
+        )}<footer className="mt-8 text-center text-gray-400 text-xs">
           © {new Date().getFullYear()} 影音轉文字服務 - Powered by Groq Whisper
         </footer>
       </div>
