@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Configure axios base URL and timeout
 axios.defaults.baseURL = '/s2t/api';
-axios.defaults.timeout = 300000; // 5 minutes timeout
+axios.defaults.timeout = 1800000; // 5 minutes timeout
 
 function App() {
   const [file, setFile] = useState(null);
