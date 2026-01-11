@@ -1,5 +1,6 @@
+from urllib.parse import unquote
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, status
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,10 +42,7 @@ app = FastAPI(
 app.mount("/s2t/static", StaticFiles(directory="/home/reyerchu/s2t/s2t/frontend/build/static"), name="static")
 
 @app.get("/s2t", response_class=HTMLResponse)
-@app.get("/s2t/{path:path}", response_class=HTMLResponse)
-async def serve_frontend(path: str = ""):
-    if path.startswith("api") or path.startswith("static"):
-        return
+async def serve_root():
     with open("/home/reyerchu/s2t/s2t/frontend/build/index.html", "r") as f:
         return HTMLResponse(content=f.read())
 
@@ -703,10 +701,14 @@ async def transcribe_root(
 
 @app.get(f"{PREFIX}/download/{{session_id}}/{{filename}}")
 async def download_file(session_id: str, filename: str):
-    file_path = f"temp/{session_id}/{filename}"
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, filename=filename)
+    filename = unquote(filename)
+    # Use absolute path for reliability
+    base_dir = Path(__file__).parent.parent
+    file_path = base_dir / "temp" / session_id / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    media_type = "application/zip" if filename.endswith(".zip") else "application/octet-stream"
+    import io; content = open(file_path, "rb").read(); logging.info(f"Sending {len(content)} bytes"); return StreamingResponse(io.BytesIO(content), media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}", "Content-Length": str(len(content))})
 
 # Add a new endpoint that matches the frontend's download request path
 @app.get("/download/{session_id}/{filename}")
@@ -821,4 +823,13 @@ async def transcribe_link(request: LinkRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)
+
+# Frontend SPA catch-all - must be at the end after all API routes
+@app.get("/s2t/{path:path}", response_class=HTMLResponse)
+async def serve_frontend(path: str = ""):
+    # Skip API and static routes - they are handled by their own endpoints
+    if path.startswith("api/") or path.startswith("static/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    with open("/home/reyerchu/s2t/s2t/frontend/build/index.html", "r") as f:
+        return HTMLResponse(content=f.read())

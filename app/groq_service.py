@@ -1,10 +1,12 @@
 """
 Groq API Service for Speech-to-Text
-使用 Groq 的免費 API 進行語音辨識
-使用 OpenCC 進行簡繁轉換
-使用 LLM 進行非中文翻譯
+支援多 API Key 輪替，突破速率限制
 """
 import os
+import subprocess
+import tempfile
+import asyncio
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -16,120 +18,239 @@ from typing import Optional, Dict, Any, List
 from opencc import OpenCC
 import re
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+# 支援多個 API Key（逗號分隔）
+GROQ_API_KEYS_STR = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEYS = [k.strip() for k in GROQ_API_KEYS_STR.split(",") if k.strip()]
 
-# 初始化 OpenCC 簡體轉繁體（台灣標準）
+MAX_FILE_SIZE_MB = 24
+CHUNK_DURATION_SEC = 600
+
 cc = OpenCC('s2twp')
 
 def is_chinese(text):
-    """檢查文字是否包含中文"""
     return bool(re.search(r'[\u4e00-\u9fff]', text))
+
+def get_audio_duration(audio_path: str) -> float:
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True
+        )
+        return float(result.stdout.strip())
+    except:
+        return 0
+
+def split_audio(audio_path: str, chunk_duration: int = CHUNK_DURATION_SEC) -> List[str]:
+    duration = get_audio_duration(audio_path)
+    if duration == 0:
+        return [audio_path]
+    
+    chunks = []
+    temp_dir = tempfile.mkdtemp()
+    num_chunks = int(duration / chunk_duration) + 1
+    
+    logging.info(f"音訊時長: {duration:.1f}秒，分割成 {num_chunks} 個片段")
+    
+    for i in range(num_chunks):
+        start_time = i * chunk_duration
+        chunk_path = os.path.join(temp_dir, f"chunk_{i:03d}.wav")
+        
+        subprocess.run([
+            "ffmpeg", "-y", "-i", audio_path,
+            "-ss", str(start_time), "-t", str(chunk_duration),
+            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+            chunk_path
+        ], capture_output=True)
+        
+        if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
+            chunks.append(chunk_path)
+            logging.info(f"已建立片段 {i+1}/{num_chunks}")
+    
+    return chunks if chunks else [audio_path]
 
 class GroqService:
     def __init__(self):
-        self.client = None
+        self.clients = []
+        self.current_client_idx = 0
         self.whisper_model = "whisper-large-v3"
         self.llm_model = "llama-3.3-70b-versatile"
         
-        if GROQ_API_KEY:
-            self.client = Groq(api_key=GROQ_API_KEY)
-            logging.info(f"Groq 服務已初始化 (Whisper: {self.whisper_model})")
+        if GROQ_API_KEYS:
+            for i, key in enumerate(GROQ_API_KEYS):
+                self.clients.append(Groq(api_key=key))
+            logging.info(f"Groq 服務已初始化，共 {len(self.clients)} 個 API Key（每小時上限 {len(self.clients) * 2} 小時音訊）")
         else:
-            logging.warning("未設定 GROQ_API_KEY，將使用本地 Whisper 模型")
+            logging.warning("未設定 GROQ_API_KEY")
+    
+    @property
+    def client(self):
+        if not self.clients:
+            return None
+        return self.clients[self.current_client_idx]
+    
+    def switch_to_next_client(self):
+        """切換到下一個 API Key"""
+        if len(self.clients) > 1:
+            old_idx = self.current_client_idx
+            self.current_client_idx = (self.current_client_idx + 1) % len(self.clients)
+            logging.info(f"切換 API Key: {old_idx + 1} -> {self.current_client_idx + 1}")
+            return True
+        return False
     
     def is_available(self) -> bool:
-        return self.client is not None
+        return len(self.clients) > 0
     
     def to_traditional(self, text: str) -> str:
-        """使用 OpenCC 將簡體中文轉換為繁體中文（台灣標準）"""
         if not text:
             return text
         return cc.convert(text)
     
     async def translate_to_chinese(self, text: str) -> str:
-        """使用 LLM 將非中文文字翻譯為繁體中文"""
         if not self.client or not text.strip():
             return text
-        
         try:
-            logging.info("使用 LLM 翻譯為繁體中文")
             response = self.client.chat.completions.create(
                 model=self.llm_model,
                 messages=[
-                    {"role": "system", "content": "你是專業翻譯。將以下文字翻譯成台灣繁體中文。只輸出翻譯結果，不要任何解釋。"},
+                    {"role": "system", "content": "你是專業翻譯。將以下文字翻譯成台灣繁體中文。只輸出翻譯結果。"},
                     {"role": "user", "content": text}
                 ],
                 temperature=0.1,
                 max_tokens=4096
             )
-            translated = response.choices[0].message.content.strip()
-            logging.info("翻譯完成")
-            return translated
+            return response.choices[0].message.content.strip()
         except Exception as e:
             logging.error(f"翻譯失敗: {str(e)}")
             return text
     
+    async def transcribe_chunk_with_retry(self, audio_path: str, language: str, time_offset: float, max_retries: int = 10) -> Dict[str, Any]:
+        """轉錄單個片段，含多 Key 輪替和重試邏輯"""
+        last_error = None
+        keys_tried = set()
+        
+        for attempt in range(max_retries):
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    transcription = self.client.audio.transcriptions.create(
+                        file=(os.path.basename(audio_path), audio_file.read()),
+                        model=self.whisper_model,
+                        response_format="verbose_json",
+                        language=language,
+                        temperature=0.0
+                    )
+                
+                detected_lang = getattr(transcription, "language", "unknown")
+                original_text = transcription.text
+                
+                if detected_lang in ["zh", "chinese"] or is_chinese(original_text):
+                    processed_text = self.to_traditional(original_text)
+                else:
+                    processed_text = await self.translate_to_chinese(original_text)
+                
+                segments = []
+                if hasattr(transcription, "segments") and transcription.segments:
+                    for seg in transcription.segments:
+                        seg_text = seg.get("text", "")
+                        if detected_lang in ["zh", "chinese"] or is_chinese(seg_text):
+                            processed_seg = self.to_traditional(seg_text)
+                        else:
+                            processed_seg = seg_text
+                        
+                        segments.append({
+                            "start": seg.get("start", 0) + time_offset,
+                            "end": seg.get("end", 0) + time_offset,
+                            "text": processed_seg
+                        })
+                else:
+                    segments = [{
+                        "start": time_offset,
+                        "end": time_offset + getattr(transcription, "duration", 0),
+                        "text": processed_text
+                    }]
+                
+                return {
+                    "text": processed_text,
+                    "language": detected_lang,
+                    "segments": segments,
+                    "success": True
+                }
+                
+            except Exception as e:
+                last_error = e
+                error_str = str(e)
+                
+                if "429" in error_str or "rate_limit" in error_str.lower():
+                    keys_tried.add(self.current_client_idx)
+                    
+                    # 嘗試切換到其他 Key
+                    if self.switch_to_next_client():
+                        if self.current_client_idx not in keys_tried:
+                            logging.info(f"使用新 API Key 重試...")
+                            continue
+                    
+                    # 所有 Key 都試過了，需要等待
+                    wait_time = 65
+                    match = re.search(r'try again in (\d+)m([\d.]+)s', error_str)
+                    if match:
+                        wait_time = int(match.group(1)) * 60 + float(match.group(2)) + 10
+                    
+                    logging.warning(f"所有 API Key 都達到限制，等待 {wait_time:.0f} 秒")
+                    keys_tried.clear()  # 重置，下一輪重新嘗試所有 key
+                    await asyncio.sleep(wait_time)
+                else:
+                    logging.error(f"轉錄錯誤: {error_str}")
+                    await asyncio.sleep(10)
+        
+        logging.error(f"片段轉錄失敗: {last_error}")
+        return {"text": "", "language": "unknown", "segments": [], "success": False}
+    
     async def transcribe(self, audio_path: str, language: str = None) -> Dict[str, Any]:
-        if not self.client:
+        if not self.clients:
             raise ValueError("Groq 服務未初始化")
         
-        logging.info(f"使用 Groq Whisper large-v3 進行轉錄: {audio_path}")
+        file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        logging.info(f"音訊檔案大小: {file_size_mb:.2f} MB")
         
-        try:
-            with open(audio_path, "rb") as audio_file:
-                transcription = self.client.audio.transcriptions.create(
-                    file=(os.path.basename(audio_path), audio_file.read()),
-                    model=self.whisper_model,
-                    response_format="verbose_json",
-                    language=language,
-                    temperature=0.0
-                )
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            logging.info(f"檔案超過 {MAX_FILE_SIZE_MB} MB，進行分割處理")
+            chunks = split_audio(audio_path)
             
-            detected_lang = getattr(transcription, "language", "unknown")
-            original_text = transcription.text
+            all_text = []
+            all_segments = []
+            detected_lang = "unknown"
             
-            # 根據語言決定處理方式
-            if detected_lang in ["zh", "chinese"] or is_chinese(original_text):
-                # 中文：使用 OpenCC 轉繁體
-                processed_text = self.to_traditional(original_text)
-                logging.info("檢測到中文，使用 OpenCC 轉換繁體")
-            else:
-                # 非中文：翻譯為繁體中文
-                processed_text = await self.translate_to_chinese(original_text)
-                logging.info(f"檢測到 {detected_lang}，已翻譯為繁體中文")
+            for i, chunk_path in enumerate(chunks):
+                time_offset = i * CHUNK_DURATION_SEC
+                logging.info(f"處理片段 {i+1}/{len(chunks)} (使用 Key {self.current_client_idx + 1}/{len(self.clients)})")
+                
+                result = await self.transcribe_chunk_with_retry(chunk_path, language, time_offset)
+                
+                if result["success"]:
+                    all_text.append(result["text"])
+                    all_segments.extend(result["segments"])
+                    detected_lang = result["language"]
+                    logging.info(f"片段 {i+1} 完成")
+                else:
+                    logging.warning(f"片段 {i+1} 失敗")
+                
+                try:
+                    os.remove(chunk_path)
+                except:
+                    pass
             
-            result = {
-                "text": processed_text,
+            return {
+                "text": " ".join(all_text),
                 "language": detected_lang,
-                "segments": []
+                "segments": all_segments
             }
-            
-            if hasattr(transcription, "segments") and transcription.segments:
-                for seg in transcription.segments:
-                    seg_text = seg.get("text", "")
-                    if detected_lang in ["zh", "chinese"] or is_chinese(seg_text):
-                        processed_seg = self.to_traditional(seg_text)
-                    else:
-                        processed_seg = await self.translate_to_chinese(seg_text)
-                    
-                    result["segments"].append({
-                        "start": seg.get("start", 0),
-                        "end": seg.get("end", 0),
-                        "text": processed_seg
-                    })
-            else:
-                result["segments"] = [{
-                    "start": 0,
-                    "end": getattr(transcription, "duration", 0),
-                    "text": processed_text
-                }]
-            
-            logging.info(f"Groq 轉錄完成，語言: {detected_lang}, 段落數: {len(result['segments'])}")
-            return result
-            
-        except Exception as e:
-            logging.error(f"Groq 轉錄失敗: {str(e)}")
-            raise
+        else:
+            result = await self.transcribe_chunk_with_retry(audio_path, language, 0)
+            return {
+                "text": result["text"],
+                "language": result["language"],
+                "segments": result["segments"]
+            }
     
     async def post_process_segments(self, segments: List[Dict], language: str = "zh") -> tuple:
         full_text = " ".join([seg["text"].strip() for seg in segments])
