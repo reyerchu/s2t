@@ -252,6 +252,61 @@ class GroqService:
                 "segments": result["segments"]
             }
     
+    async def summarize(self, text: str, max_length: int = 500) -> str:
+        """使用 LLM 生成文字摘要"""
+        if not self.clients or not text.strip():
+            return ""
+        
+        # 如果文字太短，不需要摘要
+        if len(text) < 200:
+            return text
+        
+        try:
+            logging.info("使用 LLM 生成摘要...")
+            
+            # 如果文字太長，截取前面部分
+            max_input = 15000
+            input_text = text[:max_input] if len(text) > max_input else text
+            
+            response = self.client.chat.completions.create(
+                model=self.llm_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """你是專業的內容摘要專家。請為以下內容生成一個簡潔有力的摘要。
+
+要求：
+1. 使用繁體中文
+2. 摘要長度約 200-500 字
+3. 包含主要重點和關鍵資訊
+4. 使用條列式格式便於閱讀
+5. 開頭先用一句話概述主題
+
+格式：
+## 內容摘要
+
+**主題概述**：[一句話概述]
+
+**重點摘要**：
+• [重點1]
+• [重點2]
+• [重點3]
+..."""
+                    },
+                    {"role": "user", "content": input_text}
+                ],
+                temperature=0.3,
+                max_tokens=1024
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            logging.info(f"摘要生成完成，長度：{len(summary)} 字")
+            return summary
+            
+        except Exception as e:
+            logging.error(f"生成摘要失敗: {str(e)}")
+            return ""
+    
     async def post_process_segments(self, segments: List[Dict], language: str = "zh") -> tuple:
         full_text = " ".join([seg["text"].strip() for seg in segments])
         return segments, full_text

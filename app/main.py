@@ -183,12 +183,32 @@ class TranscriptionService:
                 
                 logging.info(f"已生成 {fmt} 格式: {output_path}")
             
+            # 生成摘要
+            summary = ""
+            if "txt" in request.output_formats:
+                full_text = outputs.get("txt", "")
+                if full_text and len(full_text) > 200:
+                    try:
+                        summary = await groq_service.summarize(full_text)
+                        if summary:
+                            summary_path = temp_dir / f"{base_filename}_摘要.txt"
+                            with open(summary_path, "w", encoding="utf-8") as f:
+                                f.write(summary)
+                            outputs["summary"] = summary
+                            logging.info(f"已生成摘要: {summary_path}")
+                    except Exception as e:
+                        logging.error(f"生成摘要失敗: {str(e)}")
+            
             # 創建 ZIP 文件
             zip_path = temp_dir / f"{base_filename}.zip"
             with zipfile.ZipFile(zip_path, "w") as zip_file:
                 for fmt in request.output_formats:
                     file_path = temp_dir / f"{base_filename}.{fmt}"
                     zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
+                # 加入摘要檔案
+                summary_path = temp_dir / f"{base_filename}_摘要.txt"
+                if summary_path.exists():
+                    zip_file.write(summary_path, arcname=f"{base_filename}_摘要.txt")
             
             logging.info(f"已創建 ZIP 文件: {zip_path}")
             
@@ -624,12 +644,32 @@ class TranscriptionService:
                 
                 logging.info(f"已生成 {fmt} 格式: {output_path}")
             
+            # 生成摘要
+            summary = ""
+            if "txt" in request.output_formats:
+                full_text = outputs.get("txt", "")
+                if full_text and len(full_text) > 200:
+                    try:
+                        summary = await groq_service.summarize(full_text)
+                        if summary:
+                            summary_path = temp_dir / f"{base_filename}_摘要.txt"
+                            with open(summary_path, "w", encoding="utf-8") as f:
+                                f.write(summary)
+                            outputs["summary"] = summary
+                            logging.info(f"已生成摘要: {summary_path}")
+                    except Exception as e:
+                        logging.error(f"生成摘要失敗: {str(e)}")
+            
             # 創建 ZIP 文件
             zip_path = temp_dir / f"{base_filename}.zip"
             with zipfile.ZipFile(zip_path, "w") as zip_file:
                 for fmt in request.output_formats:
                     file_path = temp_dir / f"{base_filename}.{fmt}"
                     zip_file.write(file_path, arcname=f"{base_filename}.{fmt}")
+                # 加入摘要檔案
+                summary_path = temp_dir / f"{base_filename}_摘要.txt"
+                if summary_path.exists():
+                    zip_file.write(summary_path, arcname=f"{base_filename}_摘要.txt")
             
             logging.info(f"已創建 ZIP 文件: {zip_path}")
             
